@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>All Organized Quiz Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <small>All Organized · Managers only</small>
+      <h1>Quiz Dashboard</h1>
+    </div>
+    <div class="toprow" id="actions" hidden>
+      <button type="button" class="btn ghost" id="refresh">Refresh</button>
+      <button type="button" class="btn ghost" id="lock">Lock</button>
+    </div>
+  </header>
+  <main id="view"></main>
+  <footer><p>Results come from the Google Sheet connected to the quiz. Each row is one finished quiz.</p></footer>
+</div>
+<script src="config.js"></script>
+<script src="quizzes.js"></script>
+<script>
+(function () {
+  var CFG = window.QUIZ_CONFIG || {};
+  var view = document.getElementById("view");
+  var st = { pass: ss("ao-pass") || "", rows: null, err: "", tab: "board", keyLang: "en", loading: false, msg: "" };
+  function ss(k, v) { try { if (v === undefined) return sessionStorage.getItem(k); if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (e) { return null; } }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function order(qi, n, salt) {
+    var idx = [], s = (qi + 1) * 7919 + salt * 104729;
+    for (var k = 0; k < n; k++) idx.push(k);
+    for (var j = n - 1; j > 0; j--) { s = (s * 9301 + 49297) % 233280; var r = Math.floor(s / 233280 * (j + 1)); var t = idx[j]; idx[j] = idx[r]; idx[r] = t; }
+    return idx;
+  }
+
+  function load() {
+    if (!/^https:\/\/script\.google\.com\//.test(CFG.scriptUrl || "")) { st.err = "The quiz isn't connected to the Google Sheet yet. Paste your web app URL into config.js (README, Part 1)."; render(); return; }
+    st.loading = true; st.err = ""; render();
+    fetch(CFG.scriptUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action: "dashboard", passcode: st.pass }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        st.loading = false;
+        if (j && j.ok) { st.rows = j.rows || []; ss("ao-pass", st.pass); }
+        else { st.rows = null; st.err = j && j.error === "wrong_passcode" ? "That passcode isn't right. Try again." : "Couldn't load results. Try Refresh."; if (j && j.error === "wrong_passcode") { st.pass = ""; ss("ao-pass", null); } }
+        render();
+      })
+      .catch(function () { st.loading = false; st.err = "Couldn't reach the Google Sheet. Check your connection and try Refresh."; render(); });
+  }
+
+  function gate() {
+    var h = '<section class="card" style="max-width:460px"><h2>Manager sign in</h2><p class="muted">Enter the manager passcode set in the Google Sheet script.</p><form id="gate" class="fields"><div class="field"><label for="pass"><strong>Passcode</strong></label><input type="password" id="pass" autocomplete="current-password" required></div><div class="row"><button class="btn" type="submit">Open dashboard</button></div></form>' + (st.err ? '<p class="sync warn" role="alert">' + esc(st.err) + '</p>' : '') + '</section>';
+    view.innerHTML = h;
+    document.getElementById("gate").addEventListener("submit", function (e) { e.preventDefault(); st.pass = document.getElementById("pass").value; load(); });
+    document.getElementById("pass").focus();
+  }
+
+  function reps() {
+    var by = {};
+    st.rows.forEach(function (r) {
+      var k = String(r.email || "").toLowerCase() || ("(no email) " + r.name);
+      var p = by[k] || (by[k] = { name: r.name, email: r.email, q: {}, last: "" });
+      p.name = r.name || p.name;
+      var q = p.q[r.quizNum] || (p.q[r.quizNum] = { best: 0, attempts: 0, last: 0 });
+      q.best = Math.max(q.best, Number(r.pct) || 0); q.attempts++; q.last = Number(r.pct) || 0;
+      if (r.at > p.last) p.last = r.at;
+    });
+    return Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+  }
+  function avg(p) { var v = QUIZZES.map(function (q) { return p.q[q.num] ? p.q[q.num].best : null; }).filter(function (x) { return x !== null; }); return v.length ? Math.round(v.reduce(function (a, b) { return a + b; }, 0) / v.length) : null; }
+  function pill(v) {
+    if (!v) return '<span class="pill none">-</span>';
+    var c = v.best >= 80 ? "hi" : v.best >= 60 ? "mid" : "lo";
+    return '<span class="pill ' + c + '">' + v.best + '%</span><span class="att">' + v.attempts + (v.attempts === 1 ? ' try' : ' tries') + '</span>';
+  }
+  function d(iso) { try { return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch (e) { return ""; } }
+
+  function board() {
+    var list = reps();
+    var all = st.rows.map(function (r) { return Number(r.pct) || 0; });
+    var teamAvg = all.length ? Math.round(all.reduce(function (a, b) { return a + b; }, 0) / all.length) : 0;
+    var done = list.filter(function (p) { return QUIZZES.every(function (q) { return p.q[q.num]; }); }).length;
+    var h = '<div class="tiles"><div class="tile"><span class="num">' + list.length + '</span><span class="muted">Reps</span></div><div class="tile"><span class="num">' + st.rows.length + '</span><span class="muted">Quizzes finished</span></div><div class="tile"><span class="num">' + teamAvg + '%</span><span class="muted">Average score</span></div><div class="tile"><span class="num">' + done + '</span><span class="muted">Finished all 4</span></div></div>';
+    if (!list.length) return h + '<div class="item"><p>No results yet. Send reps the quiz link and their scores will show up here after they finish a quiz.</p></div>';
+    h += '<h2>Best score by rep</h2><div class="tablewrap"><table><thead><tr><th scope="col">Rep</th>';
+    QUIZZES.forEach(function (q) { h += '<th scope="col">Quiz ' + q.num + '<span class="att">' + esc(q.focus.en) + '</span></th>'; });
+    h += '<th scope="col">Average</th><th scope="col">Last activity</th></tr></thead><tbody>';
+    list.forEach(function (p) {
+      var a = avg(p);
+      h += '<tr><td><strong>' + esc(p.name) + '</strong><span class="att">' + esc(p.email) + '</span></td>';
+      QUIZZES.forEach(function (q) { h += '<td>' + pill(p.q[q.num]) + '</td>'; });
+      h += '<td>' + (a === null ? '-' : '<strong>' + a + '%</strong>') + '</td><td>' + esc(d(p.last)) + '</td></tr>';
+    });
+    h += '</tbody></table></div><div class="row"><button type="button" class="btn" id="copyboard">Copy scoreboard</button>' + (CFG.sheetUrl ? '<a class="btn ghost" href="' + esc(CFG.sheetUrl) + '" target="_blank" rel="noopener">Open Google Sheet</a>' : '') + '</div><p class="status" id="msg" role="status">' + esc(st.msg) + '</p>';
+    // Most-missed questions
+    var miss = {};
+    st.rows.forEach(function (r) { String(r.missed || "").split(",").forEach(function (n) { n = n.trim(); if (n) { var k = r.quizNum + "-" + n; miss[k] = (miss[k] || 0) + 1; } }); });
+    var top = Object.keys(miss).sort(function (a, b) { return miss[b] - miss[a]; }).slice(0, 8);
+    if (top.length) {
+      h += '<h2>Most-missed questions</h2><p class="muted">Good topics for your next team huddle or role-play.</p><div class="list">';
+      top.forEach(function (k) {
+        var parts = k.split("-"), q = QUIZZES.filter(function (x) { return String(x.num) === parts[0]; })[0], it = q && q.questions[+parts[1] - 1];
+        if (it) h += '<div class="item"><p><strong>Quiz ' + q.num + ', question ' + parts[1] + '</strong> · missed ' + miss[k] + (miss[k] === 1 ? ' time' : ' times') + '</p><p>' + esc(it.q.en) + '</p></div>';
+      });
+      h += '</div>';
+    }
+    return h;
+  }
+
+  function recent() {
+    var rows = st.rows.slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; });
+    if (!rows.length) return '<div class="item"><p>No results yet.</p></div>';
+    var h = '<div class="tablewrap"><table><thead><tr><th>When</th><th>Rep</th><th>Quiz</th><th>Score</th><th>Language</th><th>Missed</th></tr></thead><tbody>';
+    rows.forEach(function (r) { h += '<tr><td>' + esc(d(r.at)) + '</td><td>' + esc(r.name) + '<span class="att">' + esc(r.email) + '</span></td><td>' + esc(r.quizNum) + '. ' + esc(r.quiz) + '</td><td>' + esc(r.score) + '/' + esc(r.total) + ' (' + esc(r.pct) + '%)</td><td>' + esc(r.lang) + '</td><td>' + esc(r.missed || "None") + '</td></tr>'; });
+    return h + '</tbody></table></div>';
+  }
+
+  function key() {
+    var lg = st.keyLang;
+    var h = '<div class="tabs" role="group" aria-label="Answer key language"><button type="button" class="btn ghost" data-kl="en" aria-pressed="' + (lg === "en") + '">English</button><button type="button" class="btn ghost" data-kl="es" aria-pressed="' + (lg === "es") + '">Español</button></div>';
+    h += '<p class="muted">Letters match the order reps see on screen.</p>';
+    QUIZZES.forEach(function (q, qn) {
+      h += '<section class="card key"><h2>Quiz ' + q.num + ': ' + esc(q.title[lg]) + '</h2><ol>';
+      q.questions.forEach(function (it, qi) {
+        var pos = order(qi, it.opts.en.length, qn).indexOf(it.a);
+        h += '<li><p><strong>' + esc(it.q[lg]) + '</strong></p><p><b>' + "ABCD"[pos] + '.</b> ' + esc(it.opts[lg][it.a]) + '</p><p class="muted">' + esc(it.why[lg]) + '</p></li>';
+      });
+      h += '</ol></section>';
+    });
+    return h;
+  }
+
+  function render() {
+    document.getElementById("actions").hidden = !st.rows;
+    if (!st.rows) { if (st.loading) { view.innerHTML = '<p class="muted">Loading results...</p>'; return; } gate(); return; }
+    var tabs = [["board", "Dashboard"], ["recent", "All results"], ["key", "Answer key"]];
+    var h = '<div class="tabs" role="group" aria-label="Sections">' + tabs.map(function (x) { return '<button type="button" class="btn ghost" data-tab="' + x[0] + '" aria-pressed="' + (st.tab === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>';
+    if (st.err) h += '<p class="sync warn" role="alert">' + esc(st.err) + '</p>';
+    h += st.tab === "board" ? board() : st.tab === "recent" ? recent() : key();
+    view.innerHTML = h;
+    view.querySelectorAll("[data-tab]").forEach(function (b) { b.addEventListener("click", function () { st.tab = b.getAttribute("data-tab"); st.msg = ""; render(); }); });
+    view.querySelectorAll("[data-kl]").forEach(function (b) { b.addEventListener("click", function () { st.keyLang = b.getAttribute("data-kl"); render(); }); });
+    var cb = document.getElementById("copyboard");
+    if (cb) cb.addEventListener("click", function () {
+      var lines = [["Rep", "Email"].concat(QUIZZES.map(function (q) { return "Quiz " + q.num + " (" + q.focus.en + ")"; }), ["Average"]).join("\t")];
+      reps().forEach(function (p) { var a = avg(p); lines.push([p.name, p.email].concat(QUIZZES.map(function (q) { var v = p.q[q.num]; return v ? v.best + "% (" + v.attempts + ")" : "-"; }), [a === null ? "-" : a + "%"]).join("\t")); });
+      var el = document.getElementById("msg");
+      try { navigator.clipboard.writeText(lines.join("\n")).then(function () { st.msg = "Scoreboard copied. Paste it into a spreadsheet or email."; el.textContent = st.msg; }, function () { el.textContent = "Couldn't copy automatically."; }); } catch (e) { el.textContent = "Couldn't copy automatically."; }
+    });
+  }
+
+  document.getElementById("refresh").addEventListener("click", load);
+  document.getElementById("lock").addEventListener("click", function () { st.pass = ""; st.rows = null; st.err = ""; ss("ao-pass", null); render(); });
+  if (st.pass) load(); else render();
+})();
+</script>
+</body>
+</html>
