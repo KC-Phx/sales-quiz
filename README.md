@@ -24,7 +24,7 @@ Tip: Do this while signed in to the Google account for **info@allorganized.com**
 3. Delete everything in the editor. Open the file `apps-script/Code.gs` from this folder, copy all of it, and paste it into the editor.
 4. Near the top, find this line:
    ```
-   const MANAGER_PASSCODE = "change-this-to-a-long-passcode";
+   const MANAGER_PASSCODE = "ros09021988";
    ```
    Replace the text between the quotes with a passcode only managers will know. Make it long, like `Shelves-Since-1975-Pantry!`. Click the **Save** icon (the floppy disk).
 5. At the top of the editor, make sure the function dropdown says **setup**, then click **Run**.
